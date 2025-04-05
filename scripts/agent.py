@@ -53,6 +53,16 @@ class ChatAgent:
             return "エラー: OpenRouterのAPIキーが設定されていません。.envファイルを確認してください。"
         
         try:
+            # リクエストデータの準備
+            request_data = {
+                "model": self.model,
+                "messages": self.conversation_history
+            }
+            
+            # リクエストデータを青色で出力
+            print("\033[94m" + "OpenRouterへの送信データ:" + "\033[0m")
+            print("\033[94m" + json.dumps(request_data, indent=2, ensure_ascii=False) + "\033[0m")
+            
             # APIリクエストを送信
             response = requests.post(
                 url="https://openrouter.ai/api/v1/chat/completions",
@@ -61,10 +71,7 @@ class ChatAgent:
                     "HTTP-Referer": "http://localhost",  # ローカル開発用
                     "X-Title": "ChatAgent",  # アプリケーション名
                 },
-                data=json.dumps({
-                    "model": self.model,
-                    "messages": self.conversation_history
-                })
+                data=json.dumps(request_data)
             )
             
             # レスポンスをJSONとして解析
@@ -93,43 +100,34 @@ class ContextAwareAgent(ChatAgent):
     ChatAgentを拡張し、会話履歴を圧縮する機能とシステムプロンプトを使用する機能を持つクラス
     """
     
-    def __init__(self, model="google/gemini-2.0-flash-lite-001", system_prompt_path=None):
+    def __init__(self, model="google/gemini-2.0-flash-lite-001", system_prompt=None):
         """
         ContextAwareAgentクラスのコンストラクタ
         
         Args:
             model (str): 使用するAIモデルの名前
-            system_prompt_path (str, optional): システムプロンプトファイルのパス。デフォルトはNone（システムプロンプトなし）
+            system_prompt (str, optional): 直接指定するシステムプロンプト。デフォルトはNone
         """
         super().__init__(model)
         self.summary = None  # 会話の要約を保存する変数
         self.system_prompt = None  # システムプロンプトを保存する変数
         
-        # システムプロンプトファイルが指定されている場合、読み込む
-        if system_prompt_path:
-            self._load_system_prompt(system_prompt_path)
+        # システムプロンプトが指定されている場合
+        if system_prompt:
+            self._set_system_prompt(system_prompt)
     
-    def _load_system_prompt(self, file_path):
+    def _set_system_prompt(self, prompt_text):
         """
-        指定されたファイルからシステムプロンプトを読み込むメソッド
+        システムプロンプトを直接設定するメソッド
         
         Args:
-            file_path (str): システムプロンプトファイルのパス
+            prompt_text (str): システムプロンプトのテキスト
         """
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-                if content:
-                    self.system_prompt = content
-                    # 会話履歴の先頭にシステムプロンプトを追加
-                    if not self.conversation_history or self.conversation_history[0].get("role") != "system":
-                        self.conversation_history.insert(0, {"role": "system", "content": self.system_prompt})
-                else:
-                    print(f"警告: システムプロンプトファイル '{file_path}' は空です。")
-        except FileNotFoundError:
-            print(f"警告: システムプロンプトファイル '{file_path}' が見つかりません。")
-        except Exception as e:
-            print(f"警告: システムプロンプトファイルの読み込み中にエラーが発生しました: {str(e)}")
+        if prompt_text:
+            self.system_prompt = prompt_text
+            # 会話履歴の先頭にシステムプロンプトを追加
+            if not self.conversation_history or self.conversation_history[0].get("role") != "system":
+                self.conversation_history.insert(0, {"role": "system", "content": self.system_prompt})
     
     def reset_conversation(self):
         """
@@ -225,6 +223,7 @@ class ContextAwareAgent(ChatAgent):
             # 要約がない場合は通常のchatメソッドを使用
             return super().chat(message)
 
+
 # テスト用コード（直接実行された場合のみ実行）
 if __name__ == "__main__":
     import argparse
@@ -235,8 +234,6 @@ if __name__ == "__main__":
                       help='使用するエージェントタイプ (デフォルト: context)')
     parser.add_argument('--model', default='google/gemini-2.0-flash-lite-001',
                       help='使用するAIモデル (デフォルト: google/gemini-2.0-flash-lite-001)')
-    parser.add_argument('--system-prompt', dest='system_prompt_path',
-                      help='システムプロンプトファイルのパス')
     
     args = parser.parse_args()
     
@@ -245,7 +242,19 @@ if __name__ == "__main__":
         agent = ChatAgent(model=args.model)
         agent_name = "ChatAgent"
     else:  # context
-        agent = ContextAwareAgent(model=args.model, system_prompt_path=args.system_prompt_path)
+        # システムプロンプトファイルを読み込む
+        system_prompt_path = os.path.join(os.path.dirname(__file__), 'system_prompt.txt')
+        try:
+            with open(system_prompt_path, 'r', encoding='utf-8') as f:
+                system_prompt = f.read().strip()
+        except FileNotFoundError:
+            print(f"エラー: システムプロンプトファイル '{system_prompt_path}' が見つかりません。")
+            sys.exit(1)
+        except Exception as e:
+            print(f"エラー: システムプロンプトファイルの読み込み中にエラーが発生しました: {str(e)}")
+            sys.exit(1)
+            
+        agent = ContextAwareAgent(model=args.model, system_prompt=system_prompt)
         agent_name = "ContextAwareAgent"
     
     # 使用方法を表示
@@ -256,13 +265,6 @@ if __name__ == "__main__":
         print("- 'summary [文字数]' と入力すると会話を要約します（例: 'summary 100'）")
     print("- 'exit' と入力すると終了します")
     print("====================\n")
-    
-    # システムプロンプトの情報を表示（ContextAwareAgentの場合）
-    if args.agent == 'context' and args.system_prompt_path:
-        if agent.system_prompt:
-            print(f"システムプロンプトを読み込みました: {args.system_prompt_path}")
-        else:
-            print(f"警告: システムプロンプトを読み込めませんでした: {args.system_prompt_path}")
     
     # インタラクティブループ
     while True:
